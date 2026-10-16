@@ -1,0 +1,133 @@
+# ==============================================================================
+# KONFIGURASI INFRASTRUKTUR DATA PIPELINE (DOCKER COMPOSE)
+# ==============================================================================
+
+# Blok template bersama untuk semua container Airflow
+# Menggunakan YAML Anchor (&airflow-common) agar pengaturan tidak perlu ditulis berulang kali
+x-airflow-common: &airflow-common
+  # [SINTAKS KUNCI: PRE-BUILT IMAGE DARI DOCKER HUB]
+  # Mengunduh image dosen yang sudah memuat Java OpenJDK 17, PySpark 3.5.0, & driver PostgreSQL.
+  # Mahasiswa tidak perlu menunggu proses kompilasi library yang memakan kuota dan waktu.
+  image: iqdamshidqi/airflow-pyspark:2.8.1
+
+  environment:
+    # Mematikan DAG bawaan contoh Airflow agar tampilan antarmuka web bersih dan fokus
+    - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    # Menyetel zona waktu sistem penjadwalan ke Waktu Indonesia Barat (WIB / UTC+7)
+    - AIRFLOW__CORE__DEFAULT_TIMEZONE=Asia/Jakarta
+    # [SINTAKS PENOPANG PRAKTIKUM: LOCAL EXECUTOR]
+    # Menjalankan task langsung sebagai subprocess di dalam scheduler tanpa butuh Redis/Celery.
+    # Pilihan ini menghemat konsumsi RAM laptop mahasiswa secara signifikan (< 3 GB).
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    # String koneksi database metadata internal Airflow (mengarah ke service airflow-meta-db)
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-meta-db/airflow
+    # Kunci rahasia bersama untuk autentikasi komunikasi log antara Webserver dan Scheduler
+    - AIRFLOW__WEBSERVER__SECRET_KEY=secret_key_airflow_prak_abd_2026
+    # String koneksi bawaan ke database target PostgreSQL (postgres_fraud_conn)
+    - AIRFLOW_CONN_POSTGRES_FRAUD_CONN=postgresql://de_user:password123@target-postgres:5432/bank_warehouse
+
+  # [SINTAKS PENOPANG PRAKTIKUM: BIND MOUNTS DUA ARAH]
+  # Format: ./folder_di_laptop:/path_di_dalam_container
+  # Apapun yang Anda edit di VS Code laptop langsung terbaca di dalam Linux Docker tanpa rebuild!
+  volumes:
+    - ./dags:/opt/airflow/dags # Tempat meletakkan alur kerja Airflow (DAG)
+    - ./scripts:/opt/airflow/scripts # Tempat meletakkan kode program PySpark
+    - ./data:/opt/airflow/data # Tempat berkas CSV transaksi mentah
+    - ./sql:/opt/airflow/sql # Tempat berkas inisialisasi skema basis data
+    - ./logs:/opt/airflow/logs # Tempat sinkronisasi log eksekusi tugas Airflow
+
+  # Memastikan container Airflow baru menyala setelah database metadata berstatus sehat (healthy)
+  depends_on:
+    airflow-meta-db:
+      condition: service_healthy
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. DATABASE TARGET ANALITIK (Data Warehouse Mini)
+  # ----------------------------------------------------------------------------
+  target-postgres:
+    # Image resmi PostgreSQL berbasis Alpine Linux (sangat ringan, ukuran ~15 MB)
+    image: postgres:15-alpine
+    container_name: target-postgres
+    environment:
+      POSTGRES_USER: de_user # Akun pengguna basis data
+      POSTGRES_PASSWORD: password123 # Kata sandi basis data
+      POSTGRES_DB: bank_warehouse # Nama database target
+    # [SINTAKS PENOPANG PRAKTIKUM: PORT MAPPING]
+    # Format: "port_host_laptop:port_internal_container"
+    # Port 5432 diteruskan ke laptop host agar DBeaver bisa mengakses via localhost:5432
+    ports:
+      - "5433:5432"
+    volumes:
+      # [AUTO-INIT SQL]: File SQL di folder ini dieksekusi otomatis saat container pertama hidup
+      - ./sql/init_fraud.sql:/docker-entrypoint-initdb.d/init.sql
+      # Docker Volume fisik agar data analitik tidak hilang saat container dimatikan
+      - postgres_fraud_warehouse:/var/lib/postgresql/data
+
+  # ----------------------------------------------------------------------------
+  # 2. DATABASE METADATA INTERNAL AIRFLOW
+  # ----------------------------------------------------------------------------
+  airflow-meta-db:
+    image: postgres:15-alpine
+    container_name: airflow-meta-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      # Tempat penyimpanan status login, jadwal run, dan history DAG
+      - airflow_metadata:/var/lib/postgresql/data
+    healthcheck:
+      # Memeriksa apakah service PostgreSQL internal sudah siap menerima sambungan
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 3. CONTAINER INISIALISASI AIRFLOW (Eksekusi 1 Kali Saat Awal)
+  # ----------------------------------------------------------------------------
+  airflow-init:
+    # Mewarisi seluruh variabel konfigurasi template x-airflow-common di atas
+    <<: *airflow-common
+    container_name: airflow-init
+    # Menjalankan migrasi skema tabel internal Airflow dan membuat akun login admin
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
+      "
+
+  # ----------------------------------------------------------------------------
+  # 4. WEBSERVER AIRFLOW (Dashboard Pemantauan Berbasis Web)
+  # ----------------------------------------------------------------------------
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: airflow webserver
+    # Port 8080 dibuka ke laptop host agar UI bisa diakses melalui http://localhost:8080
+    ports:
+      - "8081:8080"
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ----------------------------------------------------------------------------
+  # 5. SCHEDULER AIRFLOW (Mesin Penjadwal & Pemeriksa Status Task)
+  # ----------------------------------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: airflow scheduler
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+# ------------------------------------------------------------------------------
+# PENYIMPANAN VOLUME FISIK DOCKER (PERSISTENT DATA)
+# Data tabel Anda tetap utuh di hard disk meski container dimatikan dengan down.
+# ------------------------------------------------------------------------------
+volumes:
+  postgres_fraud_warehouse:
+  airflow_metadata:

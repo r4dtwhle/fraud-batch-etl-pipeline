@@ -1,0 +1,23 @@
+# Dataset lengkap (153 MB, melebihi batas 100 MB GitHub) - lihat data/README.md
+data/*.csv
+!data/sample_bank_fraud.csv
+
+# Log eksekusi Airflow
+logs/
+
+# Environment & rahasia
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
