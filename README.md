@@ -166,12 +166,7 @@ Enam jenis fraud (Friendly Fraud, Card Cloning, Account Takeover, Synthetic Iden
 
 ## Perbaikan yang Dilakukan
 
-Proyek ini dikembangkan dari modul praktikum **Analisis Big Data**. Saat pertama dijalankan, seluruh run DAG berstatus **FAILED**. Penelusuran log Airflow menemukan dua bug konfigurasi yang kemudian diperbaiki:
-
-| # | Masalah | Dampak | Perbaikan |
-|:---:|---|---|---|
-| 1 | DAG memanggil `scripts/spark_fraud_etl.py`, tetapi file script bernama `spark_etl.py` | Task 1 gagal di semua percobaan: `python: can't open file '/opt/airflow/scripts/spark_fraud_etl.py'` | Script diganti nama menjadi `spark_fraud_etl.py` |
-| 2 | File inisialisasi skema berada di `sql/init_fraud.sql/init.sql`, sehingga `init_fraud.sql` adalah **folder**. Docker kemudian me-mount folder itu ke `/docker-entrypoint-initdb.d/init.sql`. | PostgreSQL gagal mengeksekusi skrip init, sehingga tabel `daily_fraud_summary` tidak pernah terbentuk dan Task 2 pasti gagal | `init_fraud.sql` dijadikan file SQL biasa sesuai path di `docker-compose.yml` |
+| 1 | File inisialisasi skema berada di `sql/init_fraud.sql/init.sql`, sehingga `init_fraud.sql` adalah **folder**. Docker kemudian me-mount folder itu ke `/docker-entrypoint-initdb.d/init.sql`. | PostgreSQL gagal mengeksekusi skrip init, sehingga tabel `daily_fraud_summary` tidak pernah terbentuk dan Task 2 pasti gagal | `init_fraud.sql` dijadikan file SQL biasa sesuai path di `docker-compose.yml` |
 
 Peningkatan tambahan:
 - Logika transformasi dipisahkan ke fungsi `transform_fraud_data()` agar bisa diuji tanpa database.
